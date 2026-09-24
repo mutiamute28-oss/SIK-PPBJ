@@ -2,8 +2,9 @@ import { useState } from "react";
 import api, { rupiah } from "@/lib/api";
 import { StatusBadge, DocTypeBadge } from "@/components/Badges";
 import { useAuth } from "@/context/AuthContext";
-import { CheckCircle2, XCircle, BookOpen, Circle } from "lucide-react";
+import { CheckCircle2, XCircle, BookOpen, Circle, Printer, Paperclip } from "lucide-react";
 import { toast } from "sonner";
+import { printDocument } from "@/components/PrintDoc";
 
 export default function DocumentDetail({ doc, onChanged }) {
   const { user } = useAuth();
@@ -41,6 +42,10 @@ export default function DocumentDetail({ doc, onChanged }) {
         <DocTypeBadge type={doc.doc_type} />
         <span className="font-mono text-sm text-slate-600">{doc.no}</span>
         <StatusBadge status={doc.status} />
+        <button data-testid="print-document" onClick={() => printDocument(doc)}
+          className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50">
+          <Printer className="w-4 h-4" /> Cetak PDF
+        </button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
@@ -83,6 +88,21 @@ export default function DocumentDetail({ doc, onChanged }) {
       )}
 
       {doc.keterangan && <Field label="Keterangan" val={doc.keterangan} />}
+
+      {doc.attachments?.length > 0 && (
+        <div>
+          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide flex items-center gap-1.5 mb-2"><Paperclip className="w-3.5 h-3.5" /> Lampiran Bukti</div>
+          <ul className="space-y-1">
+            {doc.attachments.map((a, i) => (
+              <li key={i} className="text-sm text-slate-700 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                {a.name}
+                {a.link && <a href={a.link} target="_blank" rel="noreferrer" className="text-[#14758a] hover:underline text-xs">({a.link})</a>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div>
         <h4 className="font-heading font-semibold text-slate-900 text-sm mb-3">Matriks Otorisasi</h4>

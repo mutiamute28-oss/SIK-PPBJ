@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import api, { rupiah } from "@/lib/api";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 
 const L = "block text-xs font-semibold text-slate-700 uppercase tracking-wide mb-1.5";
 const INP = "w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#14758a] focus:border-[#14758a]";
 
 const DOC_META = {
-  PPBJ: { title: "Permintaan Pengadaan Barang & Jasa", items: true, tax: false, subtypes: ["Rutin", "Investasi", "Tidak Rutin"] },
-  PUM: { title: "Permohonan Uang Muka", items: false, tax: false, advance: true },
-  PP: { title: "Permohonan Pembayaran", items: false, tax: true },
-  PTUM: { title: "Pertanggungjawaban Uang Muka", items: true, tax: true, settlement: true },
+  PPBJ: { title: "Permintaan Pengadaan Barang & Jasa", items: true, tax: false, subtypes: ["Rutin", "Investasi", "Tidak Rutin"], pay: "1-10002" },
+  PUM: { title: "Permohonan Uang Muka", items: false, tax: false, advance: true, pay: "1-10002" },
+  PP: { title: "Permohonan Pembayaran", items: false, tax: true, pay: "1-10002" },
+  PTUM: { title: "Pertanggungjawaban Uang Muka", items: true, tax: true, settlement: true, pay: "1-10002" },
+  KASKECIL: { title: "Permintaan Kas Kecil", items: true, tax: true, taxFromItems: true, pay: "1-10003" },
+  NRP: { title: "No Receipt Payment", items: true, tax: false, pay: "1-10003" },
 };
 
 export default function DocumentForm({ docType, initial, accounts, tax, onSaved, onCancel }) {
@@ -21,8 +23,8 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
     anggaran_status: "Dianggarkan", tanggal: new Date().toISOString().slice(0, 10),
     supplier: "", keterangan: "", items: [{ uraian: "", kuantitas: 1, satuan: "Ls", harga_estimasi: 0, total: 0 }],
     dpp: 0, ppn_enabled: false, pph_code: "", faktur_pajak: "",
-    expense_account: "6-10009", payment_account: "1-10002", advance_account: "1-10200",
-    uang_muka_amount: 0, related_id: "",
+    expense_account: "6-10009", payment_account: meta.pay || "1-10002", advance_account: "1-10200",
+    uang_muka_amount: 0, related_id: "", attachments: [],
   });
   const [saving, setSaving] = useState(false);
   const [pumOptions, setPumOptions] = useState([]);
@@ -41,6 +43,10 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
   const addItem = () => setF((p) => ({ ...p, items: [...p.items, { uraian: "", kuantitas: 1, satuan: "Ls", harga_estimasi: 0, total: 0 }] }));
   const delItem = (i) => setF((p) => ({ ...p, items: p.items.filter((_, x) => x !== i) }));
 
+  const setAtt = (i, k, v) => setF((p) => { const a = [...(p.attachments || [])]; a[i] = { ...a[i], [k]: v }; return { ...p, attachments: a }; });
+  const addAtt = () => setF((p) => ({ ...p, attachments: [...(p.attachments || []), { name: "", link: "" }] }));
+  const delAtt = (i) => setF((p) => ({ ...p, attachments: (p.attachments || []).filter((_, x) => x !== i) }));
+
   const itemsTotal = (f.items || []).reduce((s, it) => s + (Number(it.total) || 0), 0);
 
   const submit = async (e) => {
@@ -49,9 +55,11 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
     try {
       const payload = { ...f };
       if (!meta.items) payload.items = [];
-      if (meta.tax && !meta.settlement) payload.total = Number(f.dpp) || 0;
-      if (meta.advance) { payload.total = Number(f.uang_muka_amount) || 0; }
+      if (meta.taxFromItems) payload.dpp = itemsTotal;
+      else if (meta.tax && !meta.settlement) payload.dpp = Number(f.dpp) || 0;
+      if (meta.advance) payload.total = Number(f.uang_muka_amount) || 0;
       if (!payload.pph_code) payload.pph_code = null;
+      payload.attachments = (f.attachments || []).filter((a) => a.name || a.link);
       if (initial?.id) await api.put(`/documents/${initial.id}`, payload);
       else await api.post("/documents", payload);
       toast.success("Dokumen tersimpan");
@@ -93,7 +101,7 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
         </div>
         <div className="md:col-span-2">
           <label className={L}>Kegiatan / Proyek</label>
-          <input data-testid="form-kegiatan" className={INP} value={f.kegiatan} onChange={(e) => set("kegiatan", e.target.value)} placeholder="cth: Perbaikan Mobil APV / Pengadaan ATK" />
+          <input data-testid="form-kegiatan" className={INP} value={f.kegiatan} onChange={(e) => set("kegiatan", e.target.value)} placeholder="cth: Perbaikan Mobil APV / Konsumsi Tim Akreditasi" />
         </div>
         <div>
           <label className={L}>Supplier / Penerima</label>
@@ -178,12 +186,18 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
 
       {meta.tax && (
         <div className="bg-[#eef8f9] border border-[#b3e2e8] rounded-lg p-4 space-y-4">
-          <div className="text-sm font-heading font-semibold text-[#0d3c45] flex items-center gap-2">Pemeriksaan Pajak (Indonesia)</div>
+          <div className="text-sm font-heading font-semibold text-[#0d3c45]">Pemeriksaan Pajak (Indonesia)</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {!meta.settlement && (
+            {!meta.settlement && !meta.taxFromItems && (
               <div>
                 <label className={L}>DPP (Dasar Pengenaan Pajak)</label>
                 <input data-testid="form-dpp" type="number" className={INP} value={f.dpp} onChange={(e) => set("dpp", e.target.value)} />
+              </div>
+            )}
+            {meta.taxFromItems && (
+              <div>
+                <label className={L}>DPP (dari total rincian)</label>
+                <input className={`${INP} bg-slate-100`} value={rupiah(itemsTotal)} readOnly />
               </div>
             )}
             <div className="flex items-end gap-2 pb-1">
@@ -231,6 +245,23 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
           <select data-testid="form-payment-account" className={INP} value={f.payment_account} onChange={(e) => set("payment_account", e.target.value)}>
             {accOptions((a) => a.type === "Kas/Bank" || a.type === "Hutang")}
           </select>
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-xs font-semibold text-slate-700 uppercase tracking-wide flex items-center gap-1.5"><Paperclip className="w-3.5 h-3.5" /> Lampiran Bukti (nama / link)</label>
+          <button type="button" onClick={addAtt} data-testid="add-attachment" className="inline-flex items-center gap-1 text-xs text-[#14758a] font-medium hover:underline"><Plus className="w-3.5 h-3.5" /> Tambah</button>
+        </div>
+        <div className="space-y-2">
+          {(f.attachments || []).length === 0 && <p className="text-xs text-slate-400">Belum ada lampiran. Contoh: "Nota SPBU" / link Google Drive.</p>}
+          {(f.attachments || []).map((a, i) => (
+            <div key={i} className="flex gap-2">
+              <input data-testid={`att-name-${i}`} className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Nama bukti (cth: Nota Konsumsi)" value={a.name} onChange={(e) => setAtt(i, "name", e.target.value)} />
+              <input className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Link (opsional)" value={a.link} onChange={(e) => setAtt(i, "link", e.target.value)} />
+              <button type="button" onClick={() => delAtt(i)} className="p-2 text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+            </div>
+          ))}
         </div>
       </div>
 

@@ -262,6 +262,7 @@ class DocIn(BaseModel):
     # link
     related_id: Optional[str] = None
     uang_muka_amount: float = 0
+    attachments: List[dict] = []
 
 
 def now_iso():
@@ -269,13 +270,14 @@ def now_iso():
 
 
 def approval_template(doc_type: str) -> List[dict]:
-    common = [
-        {"role_label": "Diajukan Oleh (User)", "status": "pending"},
-        {"role_label": "Diperiksa Anggaran (Kabag Keuangan)", "status": "pending"},
-        {"role_label": "Diverifikasi (Wadir)", "status": "pending"},
-        {"role_label": "Disetujui (Direktur)", "status": "pending"},
-    ]
-    return [ApprovalStep(**s).model_dump() for s in common]
+    templates = {
+        "KASKECIL": ["Diajukan Oleh (User)", "Diverifikasi (Keuangan)", "Diketahui (Direktur)", "Dibukukan (Kabag Keuangan)"],
+        "NRP": ["Diajukan Oleh (User)", "Disetujui Oleh (Keuangan)"],
+    }
+    labels = templates.get(doc_type, [
+        "Diajukan Oleh (User)", "Diperiksa Anggaran (Kabag Keuangan)",
+        "Diverifikasi (Wadir)", "Disetujui (Direktur)"])
+    return [ApprovalStep(role_label=l).model_dump() for l in labels]
 
 
 # ------------------------------------------------------------------ AUTH endpoints
@@ -477,7 +479,7 @@ async def get_document(doc_id: str, user: dict = Depends(get_current_user)):
 
 @api_router.post("/documents")
 async def create_document(body: DocIn, user: dict = Depends(get_current_user)):
-    if body.doc_type not in ("PPBJ", "PUM", "PP", "PTUM"):
+    if body.doc_type not in ("PPBJ", "PUM", "PP", "PTUM", "KASKECIL", "NRP"):
         raise HTTPException(status_code=400, detail="Jenis dokumen tidak valid")
     total = sum((it.total or (it.kuantitas * it.harga_estimasi)) for it in body.items) if body.items else body.total
     doc = body.model_dump()
@@ -599,7 +601,15 @@ async def build_journal_lines(doc: dict, tax: dict):
                 lines.append(await line(doc.get("payment_account") or "1-10002", debit=-selisih, memo="Pengembalian sisa uang muka"))
         return lines
 
-    # PP / PPBJ realisasi pembelian barang/jasa
+    if dtype == "NRP":
+        # transaksi tanpa bukti resmi, umumnya tanpa pajak, dibayar kas kecil
+        expense = doc.get("expense_account") or "6-10009"
+        amt = doc.get("total") or dpp
+        lines.append(await line(expense, debit=amt, memo=f"{ket}"))
+        lines.append(await line(doc.get("payment_account") or "1-10003", kredit=amt, memo="Pembayaran kas"))
+        return lines
+
+    # PP / PPBJ / KASKECIL realisasi pembelian barang/jasa
     expense = doc.get("expense_account") or "6-10009"
     lines.append(await line(expense, debit=dpp, memo=f"{ket}"))
     if ppn:

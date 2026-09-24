@@ -11,6 +11,8 @@ const TITLES = {
   PUM: { h: "Permohonan Uang Muka", s: "Permintaan dana cash advance sebelum realisasi transaksi." },
   PP: { h: "Permohonan Pembayaran", s: "Pengajuan pembayaran vendor lengkap dengan kalkulasi PPh & PPN." },
   PTUM: { h: "Pertanggungjawaban Uang Muka", s: "Settlement nota riil vs uang muka." },
+  KASKECIL: { h: "Permintaan Kas Kecil", s: "Pengeluaran kas kecil operasional dengan rincian item." },
+  NRP: { h: "No Receipt Payment", s: "Transaksi yang tidak memiliki bukti / kwitansi resmi." },
 };
 
 export default function DocumentList({ docType }) {

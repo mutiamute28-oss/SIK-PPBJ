@@ -36,6 +36,8 @@ function App() {
             <Route path="/pum" element={<Protected><DocumentList docType="PUM" /></Protected>} />
             <Route path="/pp" element={<Protected><DocumentList docType="PP" /></Protected>} />
             <Route path="/ptum" element={<Protected><DocumentList docType="PTUM" /></Protected>} />
+            <Route path="/kaskecil" element={<Protected><DocumentList docType="KASKECIL" /></Protected>} />
+            <Route path="/nrp" element={<Protected><DocumentList docType="NRP" /></Protected>} />
             <Route path="/jurnal" element={<Protected><JurnalUmum /></Protected>} />
             <Route path="/pajak" element={<Protected><TaxSettings /></Protected>} />
             <Route path="/akun" element={<Protected><AccountsPage /></Protected>} />

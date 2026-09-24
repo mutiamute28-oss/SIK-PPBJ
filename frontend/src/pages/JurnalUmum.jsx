@@ -25,16 +25,23 @@ export default function JurnalUmum() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Flatten to Accurate Online rows
+  // Flatten to Accurate Online "Impor Bukti Jurnal Umum" rows
+  const fmtDate = (d) => {
+    if (!d) return "";
+    const p = String(d).slice(0, 10).split("-");
+    return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;
+  };
   const flatRows = () => {
     const rows = [];
     journals.forEach((j) => {
       j.lines.forEach((l) => {
         rows.push({
-          Tanggal: j.tanggal, "No Bukti": j.no_bukti, Keterangan: l.memo || j.keterangan,
+          "Tanggal": fmtDate(j.tanggal), "Nomor Bukti": j.no_bukti,
+          "Keterangan": l.memo || j.keterangan,
           "Kode Akun": l.account_code, "Nama Akun": l.account_name,
-          Debit: l.debit || 0, Kredit: l.kredit || 0,
-          Departemen: j.unit_kerja || "", "Faktur Pajak": j.faktur_pajak || "",
+          "Nilai Debit": l.debit || 0, "Nilai Kredit": l.kredit || 0,
+          "Departemen": j.unit_kerja || "", "Proyek": j.keterangan || "",
+          "No Faktur Pajak": j.faktur_pajak || "",
         });
       });
     });
@@ -59,7 +66,7 @@ export default function JurnalUmum() {
     const headers = Object.keys(rows[0]);
     const th = headers.map((h) => `<th style="background:#0d3c45;color:#fff;border:1px solid #ccc;padding:6px;text-align:left">${h}</th>`).join("");
     const trs = rows.map((r) => "<tr>" + headers.map((h) => {
-      const num = h === "Debit" || h === "Kredit";
+      const num = h === "Nilai Debit" || h === "Nilai Kredit";
       return `<td style="border:1px solid #ccc;padding:6px;${num ? "text-align:right" : ""}">${num ? rupiahNum(r[h]) : (r[h] ?? "")}</td>`;
     }).join("") + "</tr>").join("");
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><table>${`<tr>${th}</tr>`}${trs}</table></body></html>`;
