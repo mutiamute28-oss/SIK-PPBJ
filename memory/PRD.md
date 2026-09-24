@@ -34,9 +34,11 @@ Membangun aplikasi sistem keuangan untuk PT. SBB berdasarkan form Excel PPBJ (Pe
 - (2026-06, fork) Upload Nota nyata ke Emergent Object Storage (POST /api/upload, GET /api/files/{path}) + UI thumbnail di form & detail (`lib/tax.js`, DocumentForm, DocumentDetail).
 - (2026-06, fork) PPh 21 progresif otomatis (breakdown lapisan) & PPh 4(2) konstruksi berjenjang (dropdown klasifikasi → pph_tier/pph_rate_override). Testing agent iteration_3: semua lolos.
 
+- (2026-06, fork) **Anggaran Bulanan**: halaman `/anggaran` — pagu per unit kerja per bulan vs realisasi otomatis (hanya dokumen approved+posted). CRUD (admin/keuangan), stat cards, progress serapan, baris "belum dianggarkan". Endpoints: GET/POST/PUT/DELETE `/api/budgets`, GET `/api/budget-units`. Testing agent iteration_4: 100% lolos (backend 10/10 + frontend).
+
 ## Backlog
 - P1 (BLOCKED, menunggu file template dari user): Format export Jurnal sesuai template import Accurate Online spesifik.
-- P2: Anggaran Bulanan, lampiran ATK/Pantry, nomor form kustom.
+- P2: lampiran ATK/Pantry, nomor form kustom.
 - P2: Notifikasi approval, laporan buku besar per akun.
 - Cosmetic: render nilai kartu "Total Nilai Pengajuan" bila total 0.
 
