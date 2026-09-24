@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   LayoutDashboard, FileText, Wallet, Receipt, ClipboardCheck,
-  BookOpen, Percent, ListTree, Users, LogOut, Menu, X, Coins, ReceiptText,
+  BookOpen, Percent, ListTree, Users, LogOut, Menu, X, Coins, ReceiptText, PiggyBank,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -15,6 +15,7 @@ const NAV = [
   { to: "/kaskecil", label: "Kas Kecil", desc: "Permintaan Kas Kecil", icon: Coins, roles: ["admin", "keuangan", "approver", "user"] },
   { to: "/nrp", label: "NRP", desc: "No Receipt Payment", icon: ReceiptText, roles: ["admin", "keuangan", "approver", "user"] },
   { to: "/jurnal", label: "Jurnal Umum", desc: "Output Accurate", icon: BookOpen, roles: ["admin", "keuangan", "approver"] },
+  { to: "/anggaran", label: "Anggaran Bulanan", desc: "Pagu vs Realisasi", icon: PiggyBank, roles: ["admin", "keuangan", "approver", "user"] },
   { to: "/pajak", label: "Pengaturan Pajak", icon: Percent, roles: ["admin", "keuangan"] },
   { to: "/akun", label: "Master Akun (COA)", icon: ListTree, roles: ["admin", "keuangan"] },
   { to: "/pengguna", label: "Pengguna", icon: Users, roles: ["admin"] },

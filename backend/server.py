@@ -709,6 +709,79 @@ async def get_journal(jid: str, user: dict = Depends(get_current_user)):
     return j
 
 
+# ------------------------------------------------------------------ ANGGARAN BULANAN (budget per unit kerja)
+class BudgetIn(BaseModel):
+    unit_kerja: str
+    period: str  # YYYY-MM
+    amount: float = 0
+    catatan: Optional[str] = ""
+
+
+@api_router.get("/budget-units")
+async def budget_units(user: dict = Depends(get_current_user)):
+    units = await db.documents.distinct("unit_kerja")
+    return sorted([u for u in units if u])
+
+
+@api_router.get("/budgets")
+async def list_budgets(period: str, user: dict = Depends(get_current_user)):
+    budgets = await db.budgets.find({"period": period}, {"_id": 0}).to_list(500)
+    docs = await db.documents.find(
+        {"status": {"$in": ["approved", "posted"]}},
+        {"_id": 0, "unit_kerja": 1, "total": 1, "tanggal": 1, "created_at": 1}).to_list(5000)
+    real, cnt = {}, {}
+    for d in docs:
+        dt = (d.get("tanggal") or d.get("created_at") or "")[:7]
+        if dt != period:
+            continue
+        u = d.get("unit_kerja") or "(Tanpa Unit)"
+        real[u] = real.get(u, 0) + (d.get("total") or 0)
+        cnt[u] = cnt.get(u, 0) + 1
+    rows, seen = [], set()
+    for b in budgets:
+        u = b["unit_kerja"]
+        seen.add(u)
+        r = real.get(u, 0)
+        pagu = b.get("amount", 0) or 0
+        rows.append({**b, "realisasi": r, "doc_count": cnt.get(u, 0), "sisa": pagu - r,
+                     "persen": round(r / pagu * 100, 1) if pagu else 0, "no_budget": False})
+    for u, r in real.items():
+        if u not in seen:
+            rows.append({"id": None, "unit_kerja": u, "period": period, "amount": 0, "catatan": "",
+                         "realisasi": r, "doc_count": cnt.get(u, 0), "sisa": -r, "persen": 0, "no_budget": True})
+    rows.sort(key=lambda x: x["unit_kerja"])
+    return {"period": period, "rows": rows,
+            "total_pagu": sum((b.get("amount", 0) or 0) for b in budgets),
+            "total_realisasi": sum(real.values())}
+
+
+@api_router.post("/budgets")
+async def create_budget(body: BudgetIn, user: dict = Depends(require_roles("admin", "keuangan"))):
+    existing = await db.budgets.find_one({"unit_kerja": body.unit_kerja, "period": body.period})
+    if existing:
+        await db.budgets.update_one({"id": existing["id"]},
+                                    {"$set": {"amount": body.amount, "catatan": body.catatan}})
+        return await db.budgets.find_one({"id": existing["id"]}, {"_id": 0})
+    doc = body.model_dump()
+    doc.update({"id": str(uuid.uuid4()), "created_at": now_iso()})
+    await db.budgets.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.put("/budgets/{bid}")
+async def update_budget(bid: str, body: BudgetIn, user: dict = Depends(require_roles("admin", "keuangan"))):
+    await db.budgets.update_one({"id": bid}, {"$set": {"amount": body.amount, "catatan": body.catatan,
+                                                       "unit_kerja": body.unit_kerja, "period": body.period}})
+    return await db.budgets.find_one({"id": bid}, {"_id": 0})
+
+
+@api_router.delete("/budgets/{bid}")
+async def delete_budget(bid: str, user: dict = Depends(require_roles("admin", "keuangan"))):
+    await db.budgets.delete_one({"id": bid})
+    return {"message": "Anggaran dihapus"}
+
+
 @api_router.get("/dashboard/summary")
 async def dashboard_summary(user: dict = Depends(get_current_user)):
     async def count(q):

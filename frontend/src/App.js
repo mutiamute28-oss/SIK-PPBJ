@@ -9,6 +9,7 @@ import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
 import DocumentList from "@/pages/DocumentList";
 import JurnalUmum from "@/pages/JurnalUmum";
+import AnggaranBulanan from "@/pages/AnggaranBulanan";
 import TaxSettings from "@/pages/TaxSettings";
 import AccountsPage from "@/pages/AccountsPage";
 import UsersPage from "@/pages/UsersPage";
@@ -39,6 +40,7 @@ function App() {
             <Route path="/kaskecil" element={<Protected><DocumentList docType="KASKECIL" /></Protected>} />
             <Route path="/nrp" element={<Protected><DocumentList docType="NRP" /></Protected>} />
             <Route path="/jurnal" element={<Protected><JurnalUmum /></Protected>} />
+            <Route path="/anggaran" element={<Protected><AnggaranBulanan /></Protected>} />
             <Route path="/pajak" element={<Protected><TaxSettings /></Protected>} />
             <Route path="/akun" element={<Protected><AccountsPage /></Protected>} />
             <Route path="/pengguna" element={<Protected><UsersPage /></Protected>} />
