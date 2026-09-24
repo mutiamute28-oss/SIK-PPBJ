@@ -30,11 +30,13 @@ Membangun aplikasi sistem keuangan untuk PT. SBB berdasarkan form Excel PPBJ (Pe
 - Halaman Jurnal Umum: filter, ringkasan debit/kredit, detail baris, export CSV & Excel format Accurate Online.
 - Dashboard ringkasan. Testing agent: 100% backend & frontend pass.
 
+- Form Kas Kecil & NRP, cetak PDF formulir A4 (PrintDoc.js), lampiran link.
+- (2026-06, fork) Upload Nota nyata ke Emergent Object Storage (POST /api/upload, GET /api/files/{path}) + UI thumbnail di form & detail (`lib/tax.js`, DocumentForm, DocumentDetail).
+- (2026-06, fork) PPh 21 progresif otomatis (breakdown lapisan) & PPh 4(2) konstruksi berjenjang (dropdown klasifikasi → pph_tier/pph_rate_override). Testing agent iteration_3: semua lolos.
+
 ## Backlog
-- P1: Format Jurnal sesuai template import Accurate Online spesifik (kolom kustom), export PDF.
-- P1: PPh 21 progresif & PPh 4(2) konstruksi berjenjang otomatis.
-- P2: Form Kas Kecil & NRP (No Receipt Payment), Anggaran Bulanan, lampiran ATK/Pantry.
-- P2: Upload lampiran dokumen (object storage), nomor form kustom, cetak formulir PDF.
+- P1 (BLOCKED, menunggu file template dari user): Format export Jurnal sesuai template import Accurate Online spesifik.
+- P2: Anggaran Bulanan, lampiran ATK/Pantry, nomor form kustom.
 - P2: Notifikasi approval, laporan buku besar per akun.
 - Cosmetic: render nilai kartu "Total Nilai Pengajuan" bila total 0.
 

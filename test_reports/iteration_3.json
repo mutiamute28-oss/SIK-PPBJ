@@ -1,0 +1,33 @@
+{
+  "summary": "Verified new features: (1) real Nota upload via POST /api/upload with object-storage-backed /api/files/{path} auth-protected retrieval, (2) auto PPh21 progressive with bracket breakdown panel, (3) PPh 4(2) Konstruksi tiered dropdown with per-tier rate override. Both backend regression (pytest) and end-to-end UI (Playwright) passed all acceptance checks.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "DocumentDetail (PP)", "issues": ["'Nilai Total' shows Rp 0 for PP with DPP-only entry because backend never derives doc.total from dpp; header summary is misleading. Detail tax panel & journal remain correct (they use dpp). Consider setting total = dpp on PP save.", "React hydration warning: <span> child of <option> inside DocumentForm selects (dev warning only, no functional impact)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_upload_and_pph.py",
+    "/app/test_reports/pytest/upload_pph_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Persist doc.total = dpp for PP so 'Nilai Total' in header/list is not Rp 0.",
+    "(Optional) Fix hydration warning: <span> rendered inside <option> from x-source annotation wrapper on option children."
+  ],
+  "critical_code_review_comments": [
+    "server.py /api/upload: file size limit good (10MB); MIME derived from ext fallback is fine. Consider whitelisting content_type to prevent uploading executables labelled as images.",
+    "server.py /api/files/{path}: correctly requires authenticated user via cookies; media_type served from DB record (safer than trusting storage response).",
+    "compute_pph mirrors JS computePph exactly (progressive+tiered+flat) — consistent client/server math.",
+    "DocumentForm.jsx onPphChange auto-fills first tier + rate; onTierChange sets override — clean UX."
+  ],
+  "updated_files": ["/app/backend/tests/test_upload_and_pph.py"],
+  "success_rate": {"backend": "100% (2/2 pytest)", "frontend": "100% (all acceptance checks)"},
+  "test_credentials": "Admin mutiamute28@gmail.com / PtSbb2026! (per /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created 1 PP doc 'TEST_UI_PPH42_KONSTRUKSI' with uploaded PNG attachment (pending_approval), and 1 backend-only PP 'TEST_PPH42_KONSTRUKSI_TIER' fully approved & journalized. Journal 100jt DPP → 96jt payable + 4jt PPh (2-10005) balanced.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "PPH21 progressive: 100jt DPP → 9jt PPh (60jt*5% + 40jt*15%), net with PPN 102jt. PPH42_KONSTRUKSI tier options: labels stored WITHOUT '(x%)' suffix (rate rendered by UI only). detail-tax-panel format: '{name} · {tier} ({rate}%) = {rupiah}'. Upload endpoint requires httpOnly cookie; <img src> works because backend uses same origin. Image load may take ~1-2s on first paint — wait_for_timeout(2000+) before asserting naturalWidth.",
+  "rca of the issue": "N/A - all features working as specified."
+}
