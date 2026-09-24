@@ -2,11 +2,14 @@ import { useState } from "react";
 import api, { rupiah } from "@/lib/api";
 import { StatusBadge, DocTypeBadge } from "@/components/Badges";
 import { useAuth } from "@/context/AuthContext";
-import { CheckCircle2, XCircle, BookOpen, Circle, Printer, Paperclip } from "lucide-react";
+import { CheckCircle2, XCircle, BookOpen, Circle, Printer, Paperclip, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { printDocument } from "@/components/PrintDoc";
+import { computePph } from "@/lib/tax";
 
-export default function DocumentDetail({ doc, onChanged }) {
+const BASE = process.env.REACT_APP_BACKEND_URL;
+
+export default function DocumentDetail({ doc, onChanged, tax }) {
   const { user } = useAuth();
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -78,29 +81,43 @@ export default function DocumentDetail({ doc, onChanged }) {
         </div>
       )}
 
-      {(doc.doc_type === "PP" || doc.doc_type === "PTUM") && (
-        <div className="bg-[#eef8f9] border border-[#b3e2e8] rounded-lg p-4 text-sm grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Field label="DPP" val={rupiah(doc.dpp || doc.total)} />
-          <Field label="PPN" val={doc.ppn_enabled ? "Ya" : "Tidak"} />
-          <Field label="PPh" val={doc.pph_code || "Tanpa PPh"} />
-          <Field label="Faktur Pajak" val={doc.faktur_pajak || "-"} />
-        </div>
-      )}
+      {(doc.doc_type === "PP" || doc.doc_type === "PTUM" || doc.doc_type === "KASKECIL") && (() => {
+        const dpp = doc.dpp || doc.total || 0;
+        const t = (tax?.taxes || []).find((x) => x.code === doc.pph_code);
+        const pph = doc.pph_code ? computePph(dpp, t, doc.pph_rate_override) : 0;
+        const ppn = doc.ppn_enabled ? dpp * ((tax?.ppn_rate || 11) / 100) : 0;
+        return (
+          <div className="bg-[#eef8f9] border border-[#b3e2e8] rounded-lg p-4 text-sm grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="detail-tax-panel">
+            <Field label="DPP" val={rupiah(dpp)} />
+            <Field label={`PPN ${tax?.ppn_rate || 11}%`} val={doc.ppn_enabled ? rupiah(ppn) : "Tidak"} />
+            <Field label="PPh" val={doc.pph_code ? `${t?.name || doc.pph_code}${doc.pph_tier ? ` · ${doc.pph_tier}` : ""}${doc.pph_rate_override != null ? ` (${doc.pph_rate_override}%)` : ""} = ${rupiah(pph)}` : "Tanpa PPh"} />
+            <Field label="Faktur Pajak" val={doc.faktur_pajak || "-"} />
+          </div>
+        );
+      })()}
 
       {doc.keterangan && <Field label="Keterangan" val={doc.keterangan} />}
 
       {doc.attachments?.length > 0 && (
         <div>
-          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide flex items-center gap-1.5 mb-2"><Paperclip className="w-3.5 h-3.5" /> Lampiran Bukti</div>
-          <ul className="space-y-1">
-            {doc.attachments.map((a, i) => (
-              <li key={i} className="text-sm text-slate-700 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                {a.name}
-                {a.link && <a href={a.link} target="_blank" rel="noreferrer" className="text-[#14758a] hover:underline text-xs">({a.link})</a>}
-              </li>
-            ))}
-          </ul>
+          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide flex items-center gap-1.5 mb-2"><Paperclip className="w-3.5 h-3.5" /> Lampiran Bukti / Nota</div>
+          <div className="flex flex-wrap gap-3" data-testid="detail-attachments">
+            {doc.attachments.map((a, i) => {
+              const href = a.url ? `${BASE}${a.url}` : a.link;
+              const isImg = a.content_type?.startsWith("image/");
+              return (
+                <a key={i} href={href || undefined} target="_blank" rel="noreferrer" data-testid={`detail-attachment-${i}`}
+                  className="flex items-center gap-2 border border-slate-200 rounded-lg p-2 bg-white hover:border-[#14758a] transition-colors max-w-[260px]">
+                  {isImg ? <img src={href} alt={a.name} className="w-16 h-16 object-cover rounded-md border border-slate-100" />
+                    : <div className="w-16 h-16 rounded-md bg-slate-50 border border-slate-100 flex items-center justify-center"><FileText className="w-6 h-6 text-slate-400" /></div>}
+                  <div className="min-w-0">
+                    <div className="text-sm text-slate-800 truncate">{a.name || "Lampiran"}</div>
+                    <div className="text-[11px] text-[#14758a]">{a.url ? "File terunggah · buka" : a.link ? "Link eksternal" : ""}</div>
+                  </div>
+                </a>
+              );
+            })}
+          </div>
         </div>
       )}
 

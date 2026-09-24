@@ -18,10 +18,11 @@ import httpx
 from html import escape
 from urllib.parse import urlparse
 from bson import ObjectId
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, BackgroundTasks, UploadFile, File, Query
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+import requests
 
 from seed_data import DEFAULT_COA, DEFAULT_TAX_SETTINGS
 
@@ -211,6 +212,9 @@ class TaxLine(BaseModel):
     account: str
     kind: str = "wht"
     desc: str = ""
+    mode: Optional[str] = "flat"          # flat | progressive | tiered
+    brackets: Optional[List[dict]] = None  # untuk progressive: [{upto, rate}]
+    tiers: Optional[List[dict]] = None      # untuk tiered: [{label, rate}]
 
 
 class TaxSettingsIn(BaseModel):
@@ -262,6 +266,8 @@ class DocIn(BaseModel):
     # link
     related_id: Optional[str] = None
     uang_muka_amount: float = 0
+    pph_rate_override: Optional[float] = None
+    pph_tier: Optional[str] = ""
     attachments: List[dict] = []
 
 
@@ -546,6 +552,28 @@ async def approve_document(doc_id: str, body: ApprovalIn, user: dict = Depends(r
 
 
 # ------------------------------------------------------------------ JURNAL UMUM engine
+def compute_pph(dpp: float, t: dict, override_rate=None) -> float:
+    """Hitung PPh: progresif (bracket), tiered (rate terpilih), atau flat."""
+    dpp = float(dpp or 0)
+    mode = (t or {}).get("mode", "flat")
+    if mode == "progressive" and t.get("brackets"):
+        tax_amt = 0.0
+        prev = 0.0
+        for b in t["brackets"]:
+            upto = b.get("upto")
+            top = float(upto) if upto is not None else dpp
+            if dpp > prev:
+                taxable = min(dpp, top) - prev
+                if taxable > 0:
+                    tax_amt += taxable * (float(b["rate"]) / 100.0)
+                prev = top
+            else:
+                break
+        return tax_amt
+    rate = override_rate if override_rate is not None else t.get("rate", 0)
+    return dpp * (float(rate) / 100.0)
+
+
 async def account_name(code: str) -> str:
     acc = await db.accounts.find_one({"code": code}, {"_id": 0})
     return acc["name"] if acc else code
@@ -578,9 +606,11 @@ async def build_journal_lines(doc: dict, tax: dict):
     if doc.get("pph_code"):
         t = next((x for x in tax.get("taxes", []) if x["code"] == doc["pph_code"]), None)
         if t:
-            pph = dpp * (t["rate"] / 100.0)
+            pph = compute_pph(dpp, t, doc.get("pph_rate_override"))
             pph_account = t["account"]
             pph_name = t["name"]
+            if doc.get("pph_tier"):
+                pph_name = f"{t['name']} ({doc['pph_tier']})"
 
     if dtype == "PTUM":
         # realisasi beban menutup uang muka
@@ -698,6 +728,79 @@ async def dashboard_summary(user: dict = Depends(get_current_user)):
             "journals": journals, "recent": recent, "total_nilai": total_nilai}
 
 
+# ------------------------------------------------------------------ OBJECT STORAGE (upload nota)
+STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
+STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+APP_NAME = "sbb-keuangan"
+_storage_key = None
+
+MIME = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif",
+        "webp": "image/webp", "heic": "image/heic", "heif": "image/heif", "pdf": "application/pdf"}
+
+
+def init_storage(force: bool = False):
+    global _storage_key
+    if _storage_key and not force:
+        return _storage_key
+    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
+    resp.raise_for_status()
+    _storage_key = resp.json()["storage_key"]
+    return _storage_key
+
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    resp = requests.put(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key, "Content-Type": content_type}, data=data, timeout=120)
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = requests.put(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key, "Content-Type": content_type}, data=data, timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_object(path: str):
+    key = init_storage()
+    resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+@api_router.post("/upload")
+async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Ukuran file maksimal 10MB")
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    ct = file.content_type or MIME.get(ext, "application/octet-stream")
+    uid = str(user.get("_id") or user.get("id"))
+    path = f"{APP_NAME}/uploads/{uid}/{uuid.uuid4()}.{ext}"
+    try:
+        result = put_object(path, data, ct)
+    except Exception as e:
+        logger.error(f"upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Gagal mengunggah file ke penyimpanan")
+    spath = result.get("path", path)
+    await db.files.insert_one({"id": str(uuid.uuid4()), "storage_path": spath,
+                               "original_filename": file.filename, "content_type": ct,
+                               "size": result.get("size", len(data)), "is_deleted": False,
+                               "created_at": now_iso()})
+    return {"name": file.filename, "storage_path": spath, "content_type": ct, "url": f"/api/files/{spath}"}
+
+
+@api_router.get("/files/{path:path}")
+async def download_file(path: str, request: Request):
+    await get_current_user(request)  # cookie auth (auto-sent for <img> same-origin)
+    rec = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    if not rec:
+        raise HTTPException(status_code=404, detail="File tidak ditemukan")
+    data, ct = get_object(path)
+    return Response(content=data, media_type=rec.get("content_type", ct))
+
+
 # ------------------------------------------------------------------ startup / seed
 @api_router.get("/")
 async def root():
@@ -738,11 +841,33 @@ async def seed():
     # tax settings
     if not await db.tax_settings.find_one({"key": "default"}):
         await db.tax_settings.insert_one(dict(DEFAULT_TAX_SETTINGS))
+    # migrasi: pastikan PPH21 progresif & PPH42_KONSTRUKSI tiered tersedia pada data lama
+    ts = await db.tax_settings.find_one({"key": "default"})
+    if ts:
+        default_map = {t["code"]: t for t in DEFAULT_TAX_SETTINGS["taxes"]}
+        changed = False
+        for t in ts.get("taxes", []):
+            if t.get("code") in ("PPH21", "PPH42_KONSTRUKSI") and not t.get("mode", "flat") in ("progressive", "tiered"):
+                src = default_map.get(t["code"], {})
+                t["mode"] = src.get("mode", "flat")
+                t["name"] = src.get("name", t.get("name"))
+                if src.get("brackets"):
+                    t["brackets"] = src["brackets"]
+                if src.get("tiers"):
+                    t["tiers"] = src["tiers"]
+                changed = True
+        if changed:
+            await db.tax_settings.update_one({"key": "default"}, {"$set": {"taxes": ts["taxes"]}})
 
 
 @app.on_event("startup")
 async def on_startup():
     await seed()
+    try:
+        init_storage()
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
 
 
 app.include_router(api_router)

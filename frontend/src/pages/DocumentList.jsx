@@ -110,7 +110,7 @@ export default function DocumentList({ docType }) {
       </Modal>
 
       <Modal open={!!viewing} onClose={() => setViewing(null)} title="Detail Dokumen" wide>
-        {viewing && <DocumentDetail doc={viewing} onChanged={() => { openView(viewing.id); load(); }} />}
+        {viewing && <DocumentDetail doc={viewing} tax={tax} onChanged={() => { openView(viewing.id); load(); }} />}
       </Modal>
     </div>
   );

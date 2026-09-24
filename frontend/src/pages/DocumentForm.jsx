@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import api, { rupiah } from "@/lib/api";
-import { Plus, Trash2, Paperclip } from "lucide-react";
+import { Plus, Trash2, Paperclip, Upload, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { computePph, bracketBreakdown } from "@/lib/tax";
+
+const BASE = process.env.REACT_APP_BACKEND_URL;
 
 const L = "block text-xs font-semibold text-slate-700 uppercase tracking-wide mb-1.5";
 const INP = "w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#14758a] focus:border-[#14758a]";
@@ -27,6 +30,7 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
     uang_muka_amount: 0, related_id: "", attachments: [],
   });
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [pumOptions, setPumOptions] = useState([]);
 
   useEffect(() => {
@@ -47,7 +51,36 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
   const addAtt = () => setF((p) => ({ ...p, attachments: [...(p.attachments || []), { name: "", link: "" }] }));
   const delAtt = (i) => setF((p) => ({ ...p, attachments: (p.attachments || []).filter((_, x) => x !== i) }));
 
+  const uploadFiles = async (files) => {
+    if (!files?.length) return;
+    setUploading(true);
+    try {
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const r = await api.post("/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+        setF((p) => ({ ...p, attachments: [...(p.attachments || []), { name: r.data.name, url: r.data.url, storage_path: r.data.storage_path, content_type: r.data.content_type, link: "" }] }));
+      }
+      toast.success("Nota berhasil diunggah");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Gagal mengunggah file");
+    } finally { setUploading(false); }
+  };
+
   const itemsTotal = (f.items || []).reduce((s, it) => s + (Number(it.total) || 0), 0);
+  const dppNow = meta.taxFromItems || meta.settlement ? itemsTotal : Number(f.dpp) || 0;
+  const pphSel = (tax?.taxes || []).find((t) => t.code === f.pph_code);
+  const pphAmt = meta.tax ? computePph(dppNow, pphSel, f.pph_rate_override) : 0;
+  const ppnAmt = meta.tax && f.ppn_enabled ? dppNow * ((tax?.ppn_rate || 11) / 100) : 0;
+  const onPphChange = (code) => {
+    const t = (tax?.taxes || []).find((x) => x.code === code);
+    const firstTier = t?.mode === "tiered" ? t.tiers?.[0] : null;
+    setF((p) => ({ ...p, pph_code: code, pph_tier: firstTier?.label || "", pph_rate_override: firstTier ? firstTier.rate : null }));
+  };
+  const onTierChange = (label) => {
+    const tier = pphSel?.tiers?.find((x) => x.label === label);
+    setF((p) => ({ ...p, pph_tier: label, pph_rate_override: tier ? tier.rate : null }));
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -59,7 +92,8 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
       else if (meta.tax && !meta.settlement) payload.dpp = Number(f.dpp) || 0;
       if (meta.advance) payload.total = Number(f.uang_muka_amount) || 0;
       if (!payload.pph_code) payload.pph_code = null;
-      payload.attachments = (f.attachments || []).filter((a) => a.name || a.link);
+      payload.attachments = (f.attachments || []).filter((a) => a.name || a.link || a.url);
+      if (payload.pph_code && pphSel?.mode !== "tiered") { payload.pph_rate_override = null; payload.pph_tier = ""; }
       if (initial?.id) await api.put(`/documents/${initial.id}`, payload);
       else await api.post("/documents", payload);
       toast.success("Dokumen tersimpan");
@@ -208,17 +242,39 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
             </div>
             <div>
               <label className={L}>Jenis PPh Dipotong</label>
-              <select data-testid="form-pph" className={INP} value={f.pph_code || ""} onChange={(e) => set("pph_code", e.target.value)}>
+              <select data-testid="form-pph" className={INP} value={f.pph_code || ""} onChange={(e) => onPphChange(e.target.value)}>
                 <option value="">— Tanpa PPh —</option>
                 {(tax?.taxes || []).filter((t) => t.kind === "wht").map((t) => (
-                  <option key={t.code} value={t.code}>{t.name} ({t.rate}%)</option>
+                  <option key={t.code} value={t.code}>{t.name}{t.mode === "progressive" ? " — otomatis" : t.mode === "tiered" ? " — berjenjang" : ` (${t.rate}%)`}</option>
                 ))}
               </select>
             </div>
+            {pphSel?.mode === "tiered" && (
+              <div>
+                <label className={L}>Klasifikasi Usaha Konstruksi</label>
+                <select data-testid="form-pph-tier" className={INP} value={f.pph_tier || ""} onChange={(e) => onTierChange(e.target.value)}>
+                  {(pphSel.tiers || []).map((tr) => <option key={tr.label} value={tr.label}>{tr.label} ({tr.rate}%)</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label className={L}>No. Faktur Pajak</label>
               <input data-testid="form-faktur" className={INP} value={f.faktur_pajak} onChange={(e) => set("faktur_pajak", e.target.value)} placeholder="opsional" />
             </div>
+          </div>
+          {pphSel?.mode === "progressive" && dppNow > 0 && (
+            <div className="text-xs text-slate-600 bg-white/70 rounded-md p-3 border border-[#b3e2e8]" data-testid="pph-bracket-breakdown">
+              <div className="font-semibold text-[#0d3c45] mb-1">Perhitungan Lapisan Progresif</div>
+              {bracketBreakdown(dppNow, pphSel).map((r, i) => (
+                <div key={i} className="flex justify-between tabular"><span>{r.rate}% × {rupiah(r.taxable)}</span><span>{rupiah(r.tax)}</span></div>
+              ))}
+            </div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t border-[#b3e2e8] pt-3">
+            <Sum label="DPP" val={rupiah(dppNow)} />
+            <Sum label={`PPN ${tax?.ppn_rate || 11}%`} val={rupiah(ppnAmt)} />
+            <Sum label={`PPh${f.pph_rate_override != null ? ` ${f.pph_rate_override}%` : ""}`} val={`- ${rupiah(pphAmt)}`} testId="pph-amount" />
+            <Sum label="Total Dibayar" val={rupiah(dppNow + ppnAmt - pphAmt)} bold testId="net-amount" />
           </div>
         </div>
       )}
@@ -250,16 +306,36 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
 
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <label className="text-xs font-semibold text-slate-700 uppercase tracking-wide flex items-center gap-1.5"><Paperclip className="w-3.5 h-3.5" /> Lampiran Bukti (nama / link)</label>
-          <button type="button" onClick={addAtt} data-testid="add-attachment" className="inline-flex items-center gap-1 text-xs text-[#14758a] font-medium hover:underline"><Plus className="w-3.5 h-3.5" /> Tambah</button>
+          <label className="text-xs font-semibold text-slate-700 uppercase tracking-wide flex items-center gap-1.5"><Paperclip className="w-3.5 h-3.5" /> Lampiran Bukti / Nota</label>
+          <div className="flex items-center gap-3">
+            <label data-testid="upload-attachment" className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-md bg-[#14758a] text-white cursor-pointer hover:bg-[#106071] ${uploading ? "opacity-60 pointer-events-none" : ""}`}>
+              {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />} {uploading ? "Mengunggah…" : "Unggah Nota"}
+              <input data-testid="upload-attachment-input" type="file" multiple accept="image/*,.pdf" className="hidden" onChange={(e) => { uploadFiles(Array.from(e.target.files)); e.target.value = ""; }} />
+            </label>
+            <button type="button" onClick={addAtt} data-testid="add-attachment" className="inline-flex items-center gap-1 text-xs text-[#14758a] font-medium hover:underline"><Plus className="w-3.5 h-3.5" /> Tambah Link</button>
+          </div>
         </div>
         <div className="space-y-2">
-          {(f.attachments || []).length === 0 && <p className="text-xs text-slate-400">Belum ada lampiran. Contoh: "Nota SPBU" / link Google Drive.</p>}
+          {(f.attachments || []).length === 0 && <p className="text-xs text-slate-400">Belum ada lampiran. Unggah foto nota (JPG/PNG/PDF, maks 10MB) atau tambahkan link.</p>}
           {(f.attachments || []).map((a, i) => (
-            <div key={i} className="flex gap-2">
-              <input data-testid={`att-name-${i}`} className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Nama bukti (cth: Nota Konsumsi)" value={a.name} onChange={(e) => setAtt(i, "name", e.target.value)} />
-              <input className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Link (opsional)" value={a.link} onChange={(e) => setAtt(i, "link", e.target.value)} />
-              <button type="button" onClick={() => delAtt(i)} className="p-2 text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+            <div key={i} className="flex gap-2 items-center" data-testid={`attachment-row-${i}`}>
+              {a.url ? (
+                <>
+                  {a.content_type?.startsWith("image/") ? (
+                    <img src={`${BASE}${a.url}`} alt={a.name} className="w-12 h-12 rounded-md object-cover border border-slate-200" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-md border border-slate-200 bg-slate-50 flex items-center justify-center"><FileText className="w-5 h-5 text-slate-400" /></div>
+                  )}
+                  <input data-testid={`att-name-${i}`} className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Nama bukti" value={a.name} onChange={(e) => setAtt(i, "name", e.target.value)} />
+                  <span className="text-[10px] uppercase font-semibold text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Terunggah</span>
+                </>
+              ) : (
+                <>
+                  <input data-testid={`att-name-${i}`} className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Nama bukti (cth: Nota Konsumsi)" value={a.name} onChange={(e) => setAtt(i, "name", e.target.value)} />
+                  <input className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm" placeholder="Link (opsional)" value={a.link || ""} onChange={(e) => setAtt(i, "link", e.target.value)} />
+                </>
+              )}
+              <button type="button" onClick={() => delAtt(i)} data-testid={`del-attachment-${i}`} className="p-2 text-red-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
             </div>
           ))}
         </div>
@@ -277,5 +353,14 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
         </button>
       </div>
     </form>
+  );
+}
+
+function Sum({ label, val, bold, testId }) {
+  return (
+    <div data-testid={testId}>
+      <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">{label}</div>
+      <div className={`tabular ${bold ? "font-bold text-slate-900" : "text-slate-700"}`}>{val}</div>
+    </div>
   );
 }
