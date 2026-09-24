@@ -501,6 +501,9 @@ async def create_document(body: DocIn, user: dict = Depends(get_current_user)):
     })
     await db.documents.insert_one(doc)
     doc.pop("_id", None)
+    period = (doc.get("tanggal") or doc.get("created_at") or "")[:7]
+    check = await compute_budget_check(doc.get("unit_kerja"), period)
+    doc["budget_warning"] = check if (check and check.get("over")) else None
     return doc
 
 
@@ -780,6 +783,65 @@ async def update_budget(bid: str, body: BudgetIn, user: dict = Depends(require_r
 async def delete_budget(bid: str, user: dict = Depends(require_roles("admin", "keuangan"))):
     await db.budgets.delete_one({"id": bid})
     return {"message": "Anggaran dihapus"}
+
+
+async def compute_budget_check(unit_kerja: Optional[str], period: str, extra: float = 0.0):
+    """Cek komitmen (semua dokumen non-rejected) unit+bulan terhadap pagu."""
+    if not unit_kerja or not period:
+        return None
+    b = await db.budgets.find_one({"unit_kerja": unit_kerja, "period": period}, {"_id": 0})
+    if not b:
+        return None
+    pagu = b.get("amount", 0) or 0
+    docs = await db.documents.find(
+        {"unit_kerja": unit_kerja, "status": {"$ne": "rejected"}},
+        {"_id": 0, "total": 1, "tanggal": 1, "created_at": 1}).to_list(5000)
+    committed = 0.0
+    for d in docs:
+        dt = (d.get("tanggal") or d.get("created_at") or "")[:7]
+        if dt == period:
+            committed += d.get("total") or 0
+    committed += extra
+    return {"unit_kerja": unit_kerja, "period": period, "pagu": pagu, "committed": committed,
+            "sisa": pagu - committed, "over": committed > pagu, "over_amount": max(0, committed - pagu)}
+
+
+@api_router.get("/budgets/check")
+async def budget_check(unit_kerja: str, period: str, amount: float = 0, user: dict = Depends(get_current_user)):
+    return await compute_budget_check(unit_kerja, period, extra=amount) or {"pagu": 0, "over": False}
+
+
+@api_router.get("/budgets/annual")
+async def budgets_annual(year: int, unit_kerja: Optional[str] = None, user: dict = Depends(get_current_user)):
+    bq = {"period": {"$regex": f"^{year}-"}}
+    if unit_kerja:
+        bq["unit_kerja"] = unit_kerja
+    budgets = await db.budgets.find(bq, {"_id": 0}).to_list(2000)
+    dq = {"status": {"$in": ["approved", "posted"]}}
+    if unit_kerja:
+        dq["unit_kerja"] = unit_kerja
+    docs = await db.documents.find(dq, {"_id": 0, "unit_kerja": 1, "total": 1, "tanggal": 1, "created_at": 1}).to_list(10000)
+    pagu_m = [0.0] * 12
+    real_m = [0.0] * 12
+    for b in budgets:
+        try:
+            m = int(b["period"].split("-")[1])
+            pagu_m[m - 1] += b.get("amount", 0) or 0
+        except (ValueError, IndexError):
+            pass
+    for d in docs:
+        dt = d.get("tanggal") or d.get("created_at") or ""
+        if not dt.startswith(f"{year}-"):
+            continue
+        try:
+            m = int(dt[5:7])
+        except ValueError:
+            continue
+        if 1 <= m <= 12:
+            real_m[m - 1] += d.get("total") or 0
+    months = [{"month": i + 1, "pagu": pagu_m[i], "realisasi": real_m[i]} for i in range(12)]
+    return {"year": year, "unit_kerja": unit_kerja or "", "months": months,
+            "total_pagu": sum(pagu_m), "total_realisasi": sum(real_m)}
 
 
 @api_router.get("/dashboard/summary")

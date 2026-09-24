@@ -32,10 +32,13 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [pumOptions, setPumOptions] = useState([]);
+  const [units, setUnits] = useState([]);
 
   useEffect(() => {
     if (meta.settlement) api.get("/documents?doc_type=PUM").then((r) => setPumOptions(r.data.filter((d) => d.status === "posted" || d.status === "approved")));
   }, [meta.settlement]);
+
+  useEffect(() => { api.get("/budget-units").then((r) => setUnits(r.data)).catch(() => {}); }, []);
 
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const setItem = (i, k, v) => setF((p) => {
@@ -94,9 +97,17 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
       if (!payload.pph_code) payload.pph_code = null;
       payload.attachments = (f.attachments || []).filter((a) => a.name || a.link || a.url);
       if (payload.pph_code && pphSel?.mode !== "tiered") { payload.pph_rate_override = null; payload.pph_tier = ""; }
+      let res;
       if (initial?.id) await api.put(`/documents/${initial.id}`, payload);
-      else await api.post("/documents", payload);
+      else res = await api.post("/documents", payload);
       toast.success("Dokumen tersimpan");
+      const w = res?.data?.budget_warning;
+      if (w && w.over) {
+        toast.warning(`Melebihi pagu unit "${w.unit_kerja}"`, {
+          description: `Komitmen ${rupiah(w.committed)} melebihi pagu ${rupiah(w.pagu)} sebesar ${rupiah(w.over_amount)} untuk periode ${w.period}.`,
+          duration: 8000,
+        });
+      }
       onSaved();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Gagal menyimpan");
@@ -111,8 +122,13 @@ export default function DocumentForm({ docType, initial, accounts, tax, onSaved,
     <form onSubmit={submit} className="space-y-5" data-testid="document-form">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className={L}>Entitas / Unit Kerja</label>
+          <label className={L}>Entitas</label>
           <input data-testid="form-entitas" className={INP} value={f.entitas} onChange={(e) => set("entitas", e.target.value)} />
+        </div>
+        <div>
+          <label className={L}>Unit Kerja</label>
+          <input data-testid="form-unit-kerja" list="form-unit-options" className={INP} value={f.unit_kerja || ""} onChange={(e) => set("unit_kerja", e.target.value)} placeholder="cth: Bagian Umum" />
+          <datalist id="form-unit-options">{units.map((u) => <option key={u} value={u} />)}</datalist>
         </div>
         <div>
           <label className={L}>Tanggal</label>

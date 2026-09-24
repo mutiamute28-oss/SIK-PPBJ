@@ -1,12 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
-import api, { rupiah, formatApiErrorDetail } from "@/lib/api";
+import api, { rupiah, rupiahNum, formatApiErrorDetail } from "@/lib/api";
 import Modal from "@/components/Modal";
 import { useAuth } from "@/context/AuthContext";
-import { Wallet, Plus, Pencil, Trash2, TrendingUp, AlertTriangle } from "lucide-react";
+import { Wallet, Plus, Pencil, Trash2, TrendingUp, AlertTriangle, FileSpreadsheet, CalendarRange, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
 
 const MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
   "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 
 const monthLabel = (p) => {
   if (!p) return "";
@@ -14,14 +16,53 @@ const monthLabel = (p) => {
   return `${MONTHS[Number(m) - 1] || m} ${y}`;
 };
 
+const compact = (n) => {
+  const v = Number(n) || 0;
+  if (Math.abs(v) >= 1e9) return `${(v / 1e9).toFixed(1)} M`;
+  if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(0)} jt`;
+  if (Math.abs(v) >= 1e3) return `${(v / 1e3).toFixed(0)} rb`;
+  return String(v);
+};
+
 export default function AnggaranBulanan() {
   const { user } = useAuth();
   const canEdit = ["admin", "keuangan"].includes(user?.role);
   const now = new Date();
+  const [view, setView] = useState("bulanan");
+  const [units, setUnits] = useState([]);
+
+  useEffect(() => { api.get("/budget-units").then((r) => setUnits(r.data)).catch(() => {}); }, []);
+
+  return (
+    <div className="space-y-5" data-testid="anggaran-bulanan">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-2xl lg:text-3xl font-bold text-slate-900">Anggaran</h1>
+          <p className="text-slate-500 text-sm mt-1">Pagu anggaran per unit kerja dibandingkan realisasi dokumen disetujui &amp; terjurnal.</p>
+        </div>
+        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+          <button data-testid="tab-bulanan" onClick={() => setView("bulanan")}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm font-semibold transition-colors ${view === "bulanan" ? "bg-[#14758a] text-white" : "text-slate-600 hover:bg-slate-50"}`}>
+            <CalendarDays className="w-4 h-4" /> Bulanan
+          </button>
+          <button data-testid="tab-tahunan" onClick={() => setView("tahunan")}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm font-semibold transition-colors ${view === "tahunan" ? "bg-[#14758a] text-white" : "text-slate-600 hover:bg-slate-50"}`}>
+            <CalendarRange className="w-4 h-4" /> Tahunan
+          </button>
+        </div>
+      </div>
+
+      {view === "bulanan"
+        ? <MonthlyView canEdit={canEdit} units={units} now={now} />
+        : <AnnualView units={units} now={now} />}
+    </div>
+  );
+}
+
+function MonthlyView({ canEdit, units, now }) {
   const [period, setPeriod] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [units, setUnits] = useState([]);
   const [editing, setEditing] = useState(null);
 
   const load = useCallback(async () => {
@@ -32,7 +73,6 @@ export default function AnggaranBulanan() {
   }, [period]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { api.get("/budget-units").then((r) => setUnits(r.data)).catch(() => {}); }, []);
 
   const remove = async (bid) => {
     if (!window.confirm("Hapus anggaran unit ini?")) return;
@@ -47,19 +87,39 @@ export default function AnggaranBulanan() {
   const totalSisa = totalPagu - totalReal;
   const overCount = rows.filter((r) => !r.no_budget && r.sisa < 0).length;
 
+  const exportExcel = () => {
+    if (!rows.length) { toast.error("Tidak ada data untuk diekspor"); return; }
+    const headers = ["Unit Kerja", "Pagu", "Realisasi", "Sisa", "Serapan (%)", "Jumlah Dokumen", "Status"];
+    const th = headers.map((h) => `<th style="background:#0d3c45;color:#fff;border:1px solid #ccc;padding:6px;text-align:left">${h}</th>`).join("");
+    const trs = rows.map((r) => {
+      const cells = [r.unit_kerja, r.no_budget ? 0 : rupiahNum(r.amount), rupiahNum(r.realisasi),
+        r.no_budget ? "" : rupiahNum(r.sisa), r.no_budget ? "" : r.persen, r.doc_count,
+        r.no_budget ? "Belum dianggarkan" : (r.sisa < 0 ? "Melebihi Pagu" : "Dalam Pagu")];
+      return "<tr>" + cells.map((c, i) => `<td style="border:1px solid #ccc;padding:6px;${i >= 1 && i <= 5 ? "text-align:right" : ""}">${c}</td>`).join("") + "</tr>";
+    }).join("");
+    const foot = `<tr><td style="border:1px solid #ccc;padding:6px;font-weight:bold">TOTAL</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold">${rupiahNum(totalPagu)}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold">${rupiahNum(totalReal)}</td><td style="border:1px solid #ccc;padding:6px;text-align:right;font-weight:bold">${rupiahNum(totalSisa)}</td><td colspan="3" style="border:1px solid #ccc;padding:6px"></td></tr>`;
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><h3>Rekap Anggaran vs Realisasi — ${monthLabel(period)}</h3><table><tr>${th}</tr>${trs}${foot}</table></body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `anggaran-${period}.xls`; a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Excel berhasil diunduh");
+  };
+
   return (
-    <div className="space-y-5" data-testid="anggaran-bulanan">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <>
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-heading text-2xl lg:text-3xl font-bold text-slate-900">Anggaran Bulanan</h1>
-          <p className="text-slate-500 text-sm mt-1">Pagu anggaran per unit kerja dibandingkan realisasi dokumen disetujui &amp; terjurnal.</p>
+          <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Periode</label>
+          <input data-testid="period-picker" type="month" value={period} onChange={(e) => setPeriod(e.target.value)}
+            className="border border-slate-300 rounded-md px-3 py-2 text-sm" />
         </div>
-        <div className="flex gap-2 items-end">
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Periode</label>
-            <input data-testid="period-picker" type="month" value={period} onChange={(e) => setPeriod(e.target.value)}
-              className="border border-slate-300 rounded-md px-3 py-2 text-sm" />
-          </div>
+        <div className="flex gap-2">
+          <button data-testid="export-anggaran-excel" onClick={exportExcel}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md bg-[#f2941f] hover:bg-[#d98014] text-white text-sm font-semibold">
+            <FileSpreadsheet className="w-4 h-4" /> Export Excel
+          </button>
           {canEdit && (
             <button data-testid="add-budget-btn" onClick={() => setEditing({ unit_kerja: "", period, amount: 0, catatan: "" })}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md bg-[#14758a] hover:bg-[#0f5e6f] text-white text-sm font-semibold">
@@ -74,7 +134,7 @@ export default function AnggaranBulanan() {
         <Stat label="Total Realisasi" value={rupiah(totalReal)} icon={TrendingUp} tone="text-indigo-600 bg-indigo-50" />
         <Stat label="Sisa Anggaran" value={rupiah(totalSisa)} icon={Wallet}
           tone={totalSisa < 0 ? "text-red-600 bg-red-50" : "text-green-600 bg-green-50"} />
-        <Stat label="Unit Melebihi Pagu" value={overCount} icon={AlertTriangle}
+        <Stat label="Unit Melebihi Pagu" value={`${overCount} unit`} icon={AlertTriangle}
           tone={overCount ? "text-red-600 bg-red-50" : "text-slate-500 bg-slate-100"} />
       </div>
 
@@ -146,10 +206,73 @@ export default function AnggaranBulanan() {
         </div>
       </div>
 
-      {editing && (
-        <BudgetModal editing={editing} setEditing={setEditing} units={units} onSaved={load} />
-      )}
-    </div>
+      {editing && <BudgetModal editing={editing} setEditing={setEditing} units={units} onSaved={load} />}
+    </>
+  );
+}
+
+function AnnualView({ units, now }) {
+  const [year, setYear] = useState(now.getFullYear());
+  const [unit, setUnit] = useState("");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    const params = new URLSearchParams({ year: String(year) });
+    if (unit) params.set("unit_kerja", unit);
+    api.get(`/budgets/annual?${params.toString()}`).then((r) => setData(r.data)).finally(() => setLoading(false));
+  }, [year, unit]);
+
+  const chartData = (data?.months || []).map((m) => ({
+    name: MONTHS_SHORT[m.month - 1], Pagu: m.pagu, Realisasi: m.realisasi,
+  }));
+  const totalPagu = data?.total_pagu || 0;
+  const totalReal = data?.total_realisasi || 0;
+
+  return (
+    <>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Tahun</label>
+          <input data-testid="year-picker" type="number" min="2020" max="2100" value={year}
+            onChange={(e) => setYear(Number(e.target.value))} className="border border-slate-300 rounded-md px-3 py-2 text-sm w-28" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Unit Kerja</label>
+          <select data-testid="unit-filter" value={unit} onChange={(e) => setUnit(e.target.value)}
+            className="border border-slate-300 rounded-md px-3 py-2 text-sm min-w-[200px]">
+            <option value="">Semua Unit</option>
+            {units.map((u) => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+        <div className="ml-auto flex gap-4 text-sm">
+          <div><span className="text-slate-400 text-xs uppercase">Pagu {year}</span><div className="font-bold tabular text-slate-900">{rupiah(totalPagu)}</div></div>
+          <div><span className="text-slate-400 text-xs uppercase">Realisasi {year}</span><div className="font-bold tabular text-slate-900">{rupiah(totalReal)}</div></div>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-5" data-testid="annual-chart">
+        <h3 className="font-heading font-semibold text-slate-900 mb-4">Tren Pagu vs Realisasi {year}{unit ? ` — ${unit}` : ""}</h3>
+        {loading ? (
+          <div className="h-[340px] flex items-center justify-center text-slate-400">Memuat grafik…</div>
+        ) : (
+          <div style={{ width: "100%", height: 340 }}>
+            <ResponsiveContainer>
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={{ stroke: "#cbd5e1" }} tickLine={false} />
+                <YAxis tickFormatter={compact} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} width={56} />
+                <Tooltip formatter={(v) => rupiah(v)} contentStyle={{ borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 13 }} />
+                <Legend wrapperStyle={{ fontSize: 13 }} />
+                <Bar dataKey="Pagu" fill="#14758a" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                <Bar dataKey="Realisasi" fill="#f2941f" radius={[4, 4, 0, 0]} maxBarSize={28} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
